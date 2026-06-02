@@ -3,8 +3,6 @@
 Drauvye MCP Server - A Model Context Protocol server for managing Drauvye project boards.
 """
 
-import os
-import json
 import sys
 import logging
 import asyncio
@@ -13,7 +11,12 @@ from typing import Any
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent, CallToolResult
+from mcp.types import Tool
+
+# Add tools folder to path
+sys.path.insert(0, str(Path(__file__).parent / "tools"))
+
+from setup.setup import set_board
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
@@ -21,29 +24,6 @@ logger = logging.getLogger(__name__)
 
 # Initialize the MCP server
 server = Server("drauvye")
-
-# Current configuration path storage
-current_config = {
-    "board_path": None,
-    "board_name": None
-}
-
-# Default templates
-EXCALIDRAW_TEMPLATE = {
-    "type": "excalidraw",
-    "version": 2,
-    "source": "https://marketplace.visualstudio.com/items?itemName=pomdtr.excalidraw-editor",
-    "elements": [],
-    "appState": {
-        "gridSize": 20,
-        "gridStep": 5,
-        "gridModeEnabled": False,
-        "viewBackgroundColor": "#ffffff"
-    },
-    "files": {}
-}
-
-IR_TEMPLATE = {}
 
 
 @server.list_tools()
@@ -72,17 +52,19 @@ async def list_tools() -> list[Tool]:
 
 
 @server.call_tool()
-async def call_tool(name: str, arguments: dict[str, Any]) -> CallToolResult:
+async def call_tool(name: str, arguments: dict[str, Any]):
     """Execute a tool."""
     try:
         if name == "set_board":
-            return await set_board_tool(arguments)
+            return await set_board(arguments)
         else:
+            from mcp.types import TextContent, CallToolResult
             return CallToolResult(
                 content=[TextContent(type="text", text=f"Unknown tool: {name}")],
                 isError=True
             )
     except Exception as e:
+        from mcp.types import TextContent, CallToolResult
         logger.error(f"Error calling tool {name}: {e}")
         return CallToolResult(
             content=[TextContent(type="text", text=f"Error: {str(e)}")],
@@ -90,91 +72,6 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> CallToolResult:
         )
 
 
-async def set_board_tool(arguments: dict[str, Any]) -> CallToolResult:
-    """
-    Set up a Drauvye board in the specified folder.
-    
-    Creates:
-    - .drauvye folder
-    - <name>_drauvye_ir.json with default content
-    - <name>.excalidraw with template content
-    """
-    folder_path = arguments.get("folder_path")
-    name = arguments.get("name")
-    
-    if not folder_path:
-        return CallToolResult(
-            content=[TextContent(type="text", text="Error: folder_path is required")],
-            isError=True
-        )
-    
-    if not name:
-        return CallToolResult(
-            content=[TextContent(type="text", text="Error: name is required")],
-            isError=True
-        )
-    
-    try:
-        # Convert to Path object and resolve
-        base_path = Path(folder_path).resolve()
-        
-        # Check if base folder exists
-        if not base_path.exists():
-            return CallToolResult(
-                content=[TextContent(type="text", text=f"Error: Folder does not exist: {folder_path}")],
-                isError=True
-            )
-        
-        # Create .drauvye folder
-        drauvye_folder = base_path / ".drauvye"
-        drauvye_folder.mkdir(exist_ok=True)
-        
-        # Create IR file
-        ir_filename = f"{name}_drauvye_ir.json"
-        ir_path = drauvye_folder / ir_filename
-        with open(ir_path, 'w') as f:
-            json.dump(IR_TEMPLATE, f, indent=2)
-        
-        # Create Excalidraw file
-        excalidraw_filename = f"{name}.excalidraw"
-        excalidraw_path = drauvye_folder / excalidraw_filename
-        with open(excalidraw_path, 'w') as f:
-            json.dump(EXCALIDRAW_TEMPLATE, f, indent=2)
-        
-        # Update current config
-        current_config["board_path"] = str(drauvye_folder)
-        current_config["board_name"] = name
-        
-        # Create current.config file
-        config_file = drauvye_folder / "current.config"
-        with open(config_file, 'w') as f:
-            json.dump(current_config, f, indent=2)
-        
-        result_message = f"""Board '{name}' created successfully!
-        
-Location: {drauvye_folder}
-Files created:
-- {ir_filename}
-- {excalidraw_filename}
-- current.config
-
-Current config updated:
-- board_path: {drauvye_folder}
-- board_name: {name}"""
-        
-        logger.info(result_message)
-        
-        return CallToolResult(
-            content=[TextContent(type="text", text=result_message)],
-            isError=False
-        )
-    
-    except Exception as e:
-        logger.error(f"Error in set_board: {str(e)}")
-        return CallToolResult(
-            content=[TextContent(type="text", text=f"Error: {str(e)}")],
-            isError=True
-        )
 
 
 async def main():
@@ -186,5 +83,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    import asyncio
     asyncio.run(main())
