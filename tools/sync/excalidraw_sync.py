@@ -1,9 +1,11 @@
 """
 Utilities for converting Drauvye IR into a matching Excalidraw file.
 
-For this first pass we render nodes as text elements and edges as bound arrows.
-Frames are preserved in the IR but are not yet mapped to Excalidraw containers.
+Nodes become text elements, edges become bound arrows, and frames become
+Excalidraw frame containers when the IR provides frame bounds.
 """
+
+from __future__ import annotations
 
 import json
 import logging
@@ -11,6 +13,8 @@ import random
 import time
 from pathlib import Path
 from typing import Any
+
+from graph.frame_layout import measure_node
 
 logger = logging.getLogger(__name__)
 
@@ -54,14 +58,6 @@ def _load_excalidraw_template() -> dict[str, Any]:
         return json.load(f)
 
 
-def _text_metrics(text: str) -> tuple[float, float]:
-    lines = text.splitlines() or [""]
-    longest_line = max(len(line) for line in lines)
-    width = max(120.0, min(320.0, 24.0 + longest_line * 8.0))
-    height = max(40.0, 20.0 + (len(lines) * 22.0))
-    return width, height
-
-
 def _index_token(index: int) -> str:
     alphabet = "abcdefghijklmnopqrstuvwxyz"
     return f"a{alphabet[index % len(alphabet)]}{index // len(alphabet) if index >= len(alphabet) else ''}"
@@ -77,15 +73,16 @@ def _timestamp() -> int:
 
 def _make_text_element(node: dict[str, Any], index: int, position: tuple[float, float]) -> dict[str, Any]:
     text = str(node.get("text", ""))
-    width, height = _text_metrics(text)
-    x, y = position
+    width, height = measure_node(node)
+    x = float(node.get("x", position[0]))
+    y = float(node.get("y", position[1]))
     return {
         "id": node["id"],
         "type": "text",
         "x": x,
         "y": y,
-        "width": width,
-        "height": height,
+        "width": float(node.get("width", width)),
+        "height": float(node.get("height", height)),
         "angle": 0,
         "strokeColor": "#1e1e1e",
         "backgroundColor": "transparent",
@@ -95,7 +92,7 @@ def _make_text_element(node: dict[str, Any], index: int, position: tuple[float, 
         "roughness": 1,
         "opacity": 100,
         "groupIds": [],
-        "frameId": None,
+        "frameId": node.get("frame_id"),
         "index": _index_token(index),
         "roundness": None,
         "seed": _seed(),
@@ -184,6 +181,38 @@ def _make_arrow_element(
     }
 
 
+def _make_frame_element(frame: dict[str, Any], index: int) -> dict[str, Any]:
+    return {
+        "id": frame["id"],
+        "type": "frame",
+        "x": float(frame.get("x", 100.0)),
+        "y": float(frame.get("y", 100.0)),
+        "width": float(frame.get("width", 320.0)),
+        "height": float(frame.get("height", 220.0)),
+        "angle": 0,
+        "strokeColor": "#bbb",
+        "backgroundColor": "transparent",
+        "fillStyle": "solid",
+        "strokeWidth": 2,
+        "strokeStyle": "solid",
+        "roughness": 0,
+        "opacity": 100,
+        "groupIds": [],
+        "frameId": None,
+        "index": _index_token(index),
+        "roundness": None,
+        "seed": _seed(),
+        "version": 1,
+        "versionNonce": random.randint(1, 2_000_000_000),
+        "isDeleted": False,
+        "boundElements": [],
+        "updated": _timestamp(),
+        "link": None,
+        "locked": False,
+        "name": frame.get("name"),
+    }
+
+
 def _layout_nodes(nodes: list[dict[str, Any]]) -> dict[str, tuple[float, float]]:
     positions: dict[str, tuple[float, float]] = {}
     base_x = 120.0
@@ -216,12 +245,33 @@ def _attach_edge_backrefs(nodes_by_id: dict[str, dict[str, Any]], edges: list[di
             nodes_by_id[end_id]["boundElements"].append({"id": edge["id"], "type": "arrow"})
 
 
+def _frame_bounds_from_nodes(frame_nodes: list[dict[str, Any]]) -> dict[str, float]:
+    if not frame_nodes:
+        return {"x": 100.0, "y": 100.0, "width": 280.0, "height": 180.0}
+
+    padding_x = 40.0
+    padding_y = 56.0
+    header_space = 28.0
+
+    min_x = min(float(node.get("x", 0.0)) for node in frame_nodes)
+    min_y = min(float(node.get("y", 0.0)) for node in frame_nodes)
+    max_x = max(float(node.get("x", 0.0)) + float(node.get("width", 0.0)) for node in frame_nodes)
+    max_y = max(float(node.get("y", 0.0)) + float(node.get("height", 0.0)) for node in frame_nodes)
+
+    return {
+        "x": min_x - padding_x,
+        "y": min_y - padding_y - header_space,
+        "width": (max_x - min_x) + padding_x * 2,
+        "height": (max_y - min_y) + padding_y + header_space,
+    }
+
+
 def sync_excalidraw_from_ir(ir_data: dict[str, Any] | None = None) -> Path:
     """
     Regenerate the board's .excalidraw file from the current IR.
 
-    Nodes become text elements and edges become bound arrows. Frames are left
-    untouched for now.
+    Nodes become text elements, edges become bound arrows, and frames become
+    Excalidraw frame elements when bounds are available.
     """
     if ir_data is None:
         ir_data = load_ir()
@@ -231,21 +281,44 @@ def sync_excalidraw_from_ir(ir_data: dict[str, Any] | None = None) -> Path:
 
     nodes = list(ir_data.get("nodes", []))
     edges = list(ir_data.get("edges", []))
-    positions = _layout_nodes(nodes)
+    frames = list(ir_data.get("frames", []))
 
+    positions = _layout_nodes(nodes)
     node_elements: list[dict[str, Any]] = []
     nodes_by_id: dict[str, dict[str, Any]] = {}
+
+    node_to_frame_id: dict[str, str] = {}
+    for frame in frames:
+        for node_id in frame.get("elements", []):
+            if node_id not in node_to_frame_id:
+                node_to_frame_id[node_id] = frame["id"]
 
     for index, node in enumerate(nodes):
         position = positions.get(node["id"], (120.0, 120.0))
         element = _make_text_element(node, index, position)
+        element["frameId"] = node_to_frame_id.get(node["id"])
         node_elements.append(element)
         nodes_by_id[element["id"]] = element
 
     _attach_edge_backrefs(nodes_by_id, edges)
 
+    frame_elements: list[dict[str, Any]] = []
+    for frame_index, frame in enumerate(frames):
+        frame_nodes = [nodes_by_id[node_id] for node_id in frame.get("elements", []) if node_id in nodes_by_id]
+        if "x" not in frame or "y" not in frame or "width" not in frame or "height" not in frame:
+            frame_bounds = _frame_bounds_from_nodes(frame_nodes)
+        else:
+            frame_bounds = {
+                "x": float(frame["x"]),
+                "y": float(frame["y"]),
+                "width": float(frame["width"]),
+                "height": float(frame["height"]),
+            }
+        frame = {**frame, **frame_bounds}
+        frame_elements.append(_make_frame_element(frame, frame_index))
+
     arrow_elements: list[dict[str, Any]] = []
-    for edge_index, edge in enumerate(edges, start=len(node_elements)):
+    for edge_index, edge in enumerate(edges, start=len(node_elements) + len(frame_elements)):
         start_id = edge.get("from")
         end_id = edge.get("to")
         if start_id not in nodes_by_id or end_id not in nodes_by_id:
@@ -264,7 +337,7 @@ def sync_excalidraw_from_ir(ir_data: dict[str, Any] | None = None) -> Path:
         "type": template.get("type", "excalidraw"),
         "version": template.get("version", 2),
         "source": template.get("source", "https://excalidraw.com"),
-        "elements": node_elements + arrow_elements,
+        "elements": frame_elements + node_elements + arrow_elements,
         "appState": template.get("appState", {}),
         "files": template.get("files", {}),
     }
@@ -276,3 +349,4 @@ def sync_excalidraw_from_ir(ir_data: dict[str, Any] | None = None) -> Path:
     tmp_path.replace(excalidraw_path)
     logger.info("Excalidraw synced: %s", excalidraw_path)
     return excalidraw_path
+

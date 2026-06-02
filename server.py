@@ -17,7 +17,7 @@ from mcp.types import Tool
 sys.path.insert(0, str(Path(__file__).parent / "tools"))
 
 from setup.setup import set_board
-from graph.graph import add_node, add_edge, add_frame, remove_node, remove_edge, remove_frame
+from graph.graph import add_node, add_edge, add_frame, relax_frame, remove_node, remove_edge, remove_frame
 from read.read import read_graph, read_frame_get_all, read_frame_get_elements
 
 # Set up logging
@@ -144,6 +144,23 @@ async def list_tools() -> list[Tool]:
             }
         ),
         Tool(
+            name="relax_frame",
+            description="Re-layout all nodes attached to a frame and update the frame bounds in the IR and Excalidraw file",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "frame_id": {
+                        "type": "string",
+                        "description": "The ID or alias of the frame to relax"
+                    },
+                    "frame_name": {
+                        "type": "string",
+                        "description": "Optional frame name if you prefer referencing by name"
+                    }
+                }
+            }
+        ),
+        Tool(
             name="read_graph",
             description="Read and return the entire IR graph with all nodes, edges, and frames",
             inputSchema={
@@ -194,6 +211,8 @@ async def call_tool(name: str, arguments: dict[str, Any]):
             return await remove_edge(arguments)
         elif name == "remove_frame":
             return await remove_frame(arguments)
+        elif name == "relax_frame":
+            return await relax_frame(arguments)
         elif name == "read_graph":
             return await read_graph(arguments)
         elif name == "read_frame_get_all":
