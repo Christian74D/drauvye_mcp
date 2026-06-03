@@ -17,8 +17,9 @@ from mcp.types import Tool
 sys.path.insert(0, str(Path(__file__).parent / "tools"))
 
 from setup.setup import set_board
-from graph.graph import add_node, add_edge, add_frame, relax_frame, remove_node, remove_edge, remove_frame
+from graph.graph import add_nodes, add_edges, relax_frame, remove_nodes, remove_edges, set_frame
 from read.read import read_graph, read_frame_get_all, read_frame_get_elements
+from sync.excalidraw_sync import sync_ir_from_excalidraw
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
@@ -34,128 +35,121 @@ async def list_tools() -> list[Tool]:
     return [
         Tool(
             name="set_board",
-            description="Set up a Drauvye board in a specified folder. Creates a .drauvye folder with IR and Excalidraw files.",
+            description="Register the target .excalidraw diagram for this session. Call this first before any other board tool.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "folder_path": {
+                    "excalidraw_path": {
                         "type": "string",
-                        "description": "The base folder path where the .drauvye folder will be created"
-                    },
-                    "name": {
-                        "type": "string",
-                        "description": "The name for the board"
+                        "description": "Absolute or relative path to the target .excalidraw file"
                     }
                 },
-                "required": ["folder_path", "name"]
+                "required": ["excalidraw_path"]
             }
         ),
         Tool(
-            name="add_node",
-            description="Add a node to the graph with given text",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "text": {
-                        "type": "string",
-                        "description": "The text content of the node"
-                    }
-                },
-                "required": ["text"]
-            }
-        ),
-        Tool(
-            name="add_edge",
-            description="Add an edge between two nodes",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "from": {
-                        "type": "string",
-                        "description": "The ID of the source node"
-                    },
-                    "to": {
-                        "type": "string",
-                        "description": "The ID of the target node"
-                    }
-                },
-                "required": ["from", "to"]
-            }
-        ),
-        Tool(
-            name="add_frame",
-            description="Add a frame with a list of node IDs",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "node_list": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "List of node IDs to include in the frame"
-                    },
-                    "frame_name": {
-                        "type": "string",
-                        "description": "Optional name for the frame (auto-generated if not provided)"
-                    }
-                },
-                "required": ["node_list"]
-            }
-        ),
-        Tool(
-            name="remove_node",
-            description="Remove a node from the graph",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "node_id": {
-                        "type": "string",
-                        "description": "The ID of the node to remove"
-                    }
-                },
-                "required": ["node_id"]
-            }
-        ),
-        Tool(
-            name="remove_edge",
-            description="Remove an edge from the graph",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "edge_id": {
-                        "type": "string",
-                        "description": "The ID of the edge to remove"
-                    }
-                },
-                "required": ["edge_id"]
-            }
-        ),
-        Tool(
-            name="remove_frame",
-            description="Remove a frame from the graph",
+            name="set_frame",
+            description="Set the active frame before adding nodes and edges. Prefer the hex-prefixed frame id or alias returned by the read tools.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "frame_id": {
                         "type": "string",
-                        "description": "The ID of the frame to remove"
+                        "description": "Hex-prefixed frame id or alias from the read tools"
+                    },
+                    "frame_name": {
+                        "type": "string",
+                        "description": "Optional human-readable frame name; use frame_id when available"
+                    }
+                }
+            }
+        ),
+        Tool(
+            name="add_nodes",
+            description="Add one or more nodes to the graph. Nodes are placed at the active frame center, or 0,0 if no frame is active.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "texts": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Text values for the nodes to create"
                     }
                 },
-                "required": ["frame_id"]
+                "required": ["texts"]
+            }
+        ),
+        Tool(
+            name="add_edges",
+            description="Add one or more edges between existing nodes",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "edges": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "from": {
+                                    "type": "string",
+                                    "description": "The ID or alias of the source node"
+                                },
+                                "to": {
+                                    "type": "string",
+                                    "description": "The ID or alias of the target node"
+                                }
+                            },
+                            "required": ["from", "to"]
+                        },
+                        "description": "Edges to create"
+                    }
+                },
+                "required": ["edges"]
+            }
+        ),
+        Tool(
+            name="remove_nodes",
+            description="Remove one or more nodes from the graph, including connected edges and frame references",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "node_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Node IDs or aliases to remove"
+                    }
+                },
+                "required": ["node_ids"]
+            }
+        ),
+        Tool(
+            name="remove_edges",
+            description="Remove one or more edges from the graph",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "edge_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Edge IDs or aliases to remove"
+                    }
+                },
+                "required": ["edge_ids"]
             }
         ),
         Tool(
             name="relax_frame",
-            description="Re-layout all nodes attached to a frame and update the frame bounds in the IR and Excalidraw file",
+            description="Relax a populated frame after adding a batch of nodes and edges. Use the hex-prefixed frame id or alias returned by the read tools.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "frame_id": {
                         "type": "string",
-                        "description": "The ID or alias of the frame to relax"
+                        "description": "Hex-prefixed frame id or alias from the read tools"
                     },
                     "frame_name": {
                         "type": "string",
-                        "description": "Optional frame name if you prefer referencing by name"
+                        "description": "Optional human-readable frame name; prefer frame_id for reliable calls"
                     }
                 }
             }
@@ -197,20 +191,21 @@ async def list_tools() -> list[Tool]:
 async def call_tool(name: str, arguments: dict[str, Any]):
     """Execute a tool."""
     try:
+        if name != "set_board":
+            sync_ir_from_excalidraw()
+
         if name == "set_board":
             return await set_board(arguments)
-        elif name == "add_node":
-            return await add_node(arguments)
-        elif name == "add_edge":
-            return await add_edge(arguments)
-        elif name == "add_frame":
-            return await add_frame(arguments)
-        elif name == "remove_node":
-            return await remove_node(arguments)
-        elif name == "remove_edge":
-            return await remove_edge(arguments)
-        elif name == "remove_frame":
-            return await remove_frame(arguments)
+        elif name == "set_frame":
+            return await set_frame(arguments)
+        elif name == "add_nodes":
+            return await add_nodes(arguments)
+        elif name == "add_edges":
+            return await add_edges(arguments)
+        elif name == "remove_nodes":
+            return await remove_nodes(arguments)
+        elif name == "remove_edges":
+            return await remove_edges(arguments)
         elif name == "relax_frame":
             return await relax_frame(arguments)
         elif name == "read_graph":

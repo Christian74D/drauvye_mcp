@@ -20,27 +20,36 @@ from graph.aliasing import (
     resolve_node_ref,
 )
 from graph.frame_layout import relax_nodes_in_frame
-from sync.excalidraw_sync import sync_excalidraw_from_ir
+from sync.excalidraw_sync import get_board_paths, sync_excalidraw_from_ir, sync_ir_from_excalidraw
 
 logger = logging.getLogger(__name__)
 
 
 def get_ir_path():
-    """Get the IR file path from current.config"""
-    config_file = Path(__file__).parent.parent.parent / "current.config"
-
-    with open(config_file, "r", encoding="utf-8") as f:
-        config = json.load(f)
-
-    if not config.get("path"):
-        raise ValueError("No board path set in current.config. Call set_board first.")
-
-    ir_path = Path(config["path"]) / f"{config['proj_name']}_drauvye_ir.json"
+    """Get the repo-local IR file path for the active diagram."""
+    ir_path, _ = get_board_paths()
     return ir_path
+
+
+def get_current_config_path() -> Path:
+    return Path(__file__).parent.parent.parent / "current.config"
+
+
+def load_current_config() -> dict[str, Any]:
+    config_file = get_current_config_path()
+    with open(config_file, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_current_config(config: dict[str, Any]) -> None:
+    config_file = get_current_config_path()
+    with open(config_file, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2)
 
 
 def load_ir():
     """Load the IR JSON file"""
+    sync_ir_from_excalidraw()
     ir_path = get_ir_path()
 
     if not ir_path.exists():
@@ -87,6 +96,239 @@ def _format_edge_ref(ir_data: dict[str, Any], edge_id: str) -> str:
 def _format_frame_ref(ir_data: dict[str, Any], frame_id: str) -> str:
     aliases = _frame_alias_map(ir_data)
     return aliases.get(frame_id, frame_id)
+
+
+def _active_frame(ir_data: dict[str, Any]) -> dict[str, Any] | None:
+    active_frame_id = load_current_config().get("active_frame_id")
+    if not active_frame_id:
+        return None
+    return next((frame for frame in ir_data.get("frames", []) if frame.get("id") == active_frame_id), None)
+
+
+def _active_frame_center(ir_data: dict[str, Any]) -> tuple[float, float, str | None]:
+    frame = _active_frame(ir_data)
+    if not frame:
+        return 0.0, 0.0, None
+
+    x = float(frame.get("x", 0.0))
+    y = float(frame.get("y", 0.0))
+    width = float(frame.get("width", 0.0))
+    height = float(frame.get("height", 0.0))
+    return x + width / 2.0, y + height / 2.0, frame["id"]
+
+
+def _coerce_texts(arguments: dict[str, Any]) -> list[str]:
+    if "texts" in arguments:
+        raw_nodes = arguments.get("texts", [])
+    else:
+        raw_nodes = arguments.get("nodes", [])
+
+    texts: list[str] = []
+    for item in raw_nodes:
+        if isinstance(item, str):
+            text = item
+        elif isinstance(item, dict):
+            text = str(item.get("text", ""))
+        else:
+            text = ""
+        if text:
+            texts.append(text)
+    return texts
+
+
+def _coerce_edges(arguments: dict[str, Any]) -> list[dict[str, str]]:
+    raw_edges = arguments.get("edges", [])
+    edges: list[dict[str, str]] = []
+    for item in raw_edges:
+        if not isinstance(item, dict):
+            continue
+        from_ref = item.get("from") or item.get("from_node") or item.get("source")
+        to_ref = item.get("to") or item.get("to_node") or item.get("target")
+        if from_ref and to_ref:
+            edges.append({"from": str(from_ref), "to": str(to_ref)})
+    return edges
+
+
+async def set_frame(arguments: dict[str, Any]) -> CallToolResult:
+    """Set the active frame before adding nodes and edges."""
+    frame_ref = arguments.get("frame_id") or arguments.get("frame_name")
+
+    if not frame_ref:
+        return CallToolResult(
+            content=[TextContent(type="text", text="Error: frame_id or frame_name is required")],
+            isError=True,
+        )
+
+    try:
+        ir_data = load_ir()
+        frame_id = resolve_frame_ref(ir_data, frame_ref)
+        if not frame_id:
+            matching_frame = next((f for f in ir_data.get("frames", []) if f.get("name") == frame_ref), None)
+            frame_id = matching_frame["id"] if matching_frame else None
+        if not frame_id:
+            frame_aliases = _frame_alias_map(ir_data)
+            return CallToolResult(
+                content=[
+                    TextContent(
+                        type="text",
+                        text=f"Error: Frame '{frame_ref}' not found. Available: {list(frame_aliases.values())}",
+                    )
+                ],
+                isError=True,
+            )
+
+        config = load_current_config()
+        config["active_frame_id"] = frame_id
+        save_current_config(config)
+
+        frame_alias = _format_frame_ref(ir_data, frame_id)
+        frame = next((f for f in ir_data.get("frames", []) if f["id"] == frame_id), {})
+        result_message = f"Active frame set successfully!\nFrame: {frame_alias}\nFrame Name: {frame.get('name', '')}"
+        logger.info(result_message)
+
+        return CallToolResult(
+            content=[TextContent(type="text", text=result_message)],
+            isError=False,
+        )
+
+    except Exception as e:
+        logger.error("Error in set_frame: %s", str(e))
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Error: {str(e)}")],
+            isError=True,
+        )
+
+
+async def add_nodes(arguments: dict[str, Any]) -> CallToolResult:
+    """Add multiple nodes to the IR."""
+    texts = _coerce_texts(arguments)
+
+    if not texts:
+        return CallToolResult(
+            content=[TextContent(type="text", text="Error: texts is required and must contain at least one value")],
+            isError=True,
+        )
+
+    try:
+        ir_data = load_ir()
+        x, y, frame_id = _active_frame_center(ir_data)
+        created_nodes: list[dict[str, Any]] = []
+
+        for text in texts:
+            node = {
+                "id": str(uuid4()),
+                "text": text,
+                "x": x,
+                "y": y,
+            }
+            if frame_id:
+                node["frame_id"] = frame_id
+            ir_data["nodes"].append(node)
+            created_nodes.append(node)
+
+        if frame_id:
+            frame = next((f for f in ir_data.get("frames", []) if f.get("id") == frame_id), None)
+            if frame is not None:
+                frame.setdefault("elements", [])
+                for node in created_nodes:
+                    if node["id"] not in frame["elements"]:
+                        frame["elements"].append(node["id"])
+
+        save_ir(ir_data)
+
+        result_lines = ["Nodes added successfully!"]
+        for node in created_nodes:
+            result_lines.append(f"  - {_format_node_ref(ir_data, node['id'])}: {node['text']}")
+        if frame_id:
+            result_lines.append(f"Placed at active frame center: {_format_frame_ref(ir_data, frame_id)}")
+        else:
+            result_lines.append("Placed at default position: x=0.0, y=0.0")
+
+        result_message = "\n".join(result_lines)
+        logger.info(result_message)
+
+        return CallToolResult(
+            content=[TextContent(type="text", text=result_message)],
+            isError=False,
+        )
+
+    except Exception as e:
+        logger.error("Error in add_nodes: %s", str(e))
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Error: {str(e)}")],
+            isError=True,
+        )
+
+
+async def add_edges(arguments: dict[str, Any]) -> CallToolResult:
+    """Add multiple edges between nodes."""
+    edge_specs = _coerce_edges(arguments)
+
+    if not edge_specs:
+        return CallToolResult(
+            content=[TextContent(type="text", text="Error: edges is required and must contain from/to values")],
+            isError=True,
+        )
+
+    try:
+        ir_data = load_ir()
+        _, _, active_frame_id = _active_frame_center(ir_data)
+        created_edges: list[dict[str, str]] = []
+
+        for edge_spec in edge_specs:
+            from_node = resolve_node_ref(ir_data, edge_spec["from"])
+            to_node = resolve_node_ref(ir_data, edge_spec["to"])
+            if not from_node or not to_node:
+                node_aliases = _node_alias_map(ir_data)
+                return CallToolResult(
+                    content=[
+                        TextContent(
+                            type="text",
+                            text=(
+                                "Error: One or both nodes don't exist. "
+                                f"Failed edge: {edge_spec['from']} -> {edge_spec['to']}. "
+                                f"Available nodes: {list(node_aliases.values())}"
+                            ),
+                        )
+                    ],
+                    isError=True,
+                )
+
+            edge = {
+                "id": str(uuid4()),
+                "from": from_node,
+                "to": to_node,
+            }
+            if active_frame_id:
+                edge["frame_id"] = active_frame_id
+            ir_data["edges"].append(edge)
+            created_edges.append(edge)
+
+        save_ir(ir_data)
+
+        result_lines = ["Edges added successfully!"]
+        for edge in created_edges:
+            result_lines.append(
+                f"  - {_format_edge_ref(ir_data, edge['id'])}: "
+                f"{_format_node_ref(ir_data, edge['from'])} -> {_format_node_ref(ir_data, edge['to'])}"
+            )
+        if active_frame_id:
+            result_lines.append(f"Active frame: {_format_frame_ref(ir_data, active_frame_id)}")
+
+        result_message = "\n".join(result_lines)
+        logger.info(result_message)
+
+        return CallToolResult(
+            content=[TextContent(type="text", text=result_message)],
+            isError=False,
+        )
+
+    except Exception as e:
+        logger.error("Error in add_edges: %s", str(e))
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Error: {str(e)}")],
+            isError=True,
+        )
 
 
 async def add_node(arguments: dict[str, Any]) -> CallToolResult:
@@ -245,7 +487,7 @@ async def add_frame(arguments: dict[str, Any]) -> CallToolResult:
 
 
 async def relax_frame(arguments: dict[str, Any]) -> CallToolResult:
-    """Re-layout all nodes in a frame and update the frame bounds."""
+    """Re-layout all nodes in a frame after adding a batch of nodes and edges."""
     frame_ref = arguments.get("frame_id") or arguments.get("frame_name")
 
     if not frame_ref:
@@ -381,6 +623,61 @@ async def remove_node(arguments: dict[str, Any]) -> CallToolResult:
         )
 
 
+async def remove_nodes(arguments: dict[str, Any]) -> CallToolResult:
+    """Remove multiple nodes from the IR."""
+    node_refs = arguments.get("node_ids") or arguments.get("nodes") or []
+
+    if not node_refs:
+        return CallToolResult(
+            content=[TextContent(type="text", text="Error: node_ids is required")],
+            isError=True,
+        )
+
+    try:
+        ir_data = load_ir()
+        resolved_node_ids: list[str] = []
+        for node_ref in node_refs:
+            node_id = resolve_node_ref(ir_data, str(node_ref))
+            if not node_id:
+                return CallToolResult(
+                    content=[TextContent(type="text", text=f"Error: Node {node_ref} not found")],
+                    isError=True,
+                )
+            resolved_node_ids.append(node_id)
+
+        node_id_set = set(resolved_node_ids)
+        removed_aliases = [_format_node_ref(ir_data, node_id) for node_id in resolved_node_ids]
+        initial_edge_count = len(ir_data["edges"])
+
+        ir_data["nodes"] = [n for n in ir_data["nodes"] if n["id"] not in node_id_set]
+        ir_data["edges"] = [e for e in ir_data["edges"] if e["from"] not in node_id_set and e["to"] not in node_id_set]
+
+        for frame in ir_data["frames"]:
+            frame["elements"] = [node_id for node_id in frame["elements"] if node_id not in node_id_set]
+
+        removed_edge_count = initial_edge_count - len(ir_data["edges"])
+        save_ir(ir_data)
+
+        result_message = (
+            "Nodes removed successfully!\n"
+            f"Nodes: {removed_aliases}\n"
+            f"Connected edges removed: {removed_edge_count}"
+        )
+        logger.info(result_message)
+
+        return CallToolResult(
+            content=[TextContent(type="text", text=result_message)],
+            isError=False,
+        )
+
+    except Exception as e:
+        logger.error("Error in remove_nodes: %s", str(e))
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Error: {str(e)}")],
+            isError=True,
+        )
+
+
 async def remove_edge(arguments: dict[str, Any]) -> CallToolResult:
     """Remove an edge from the IR"""
     edge_ref = arguments.get("edge_id")
@@ -421,6 +718,50 @@ async def remove_edge(arguments: dict[str, Any]) -> CallToolResult:
 
     except Exception as e:
         logger.error("Error in remove_edge: %s", str(e))
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Error: {str(e)}")],
+            isError=True,
+        )
+
+
+async def remove_edges(arguments: dict[str, Any]) -> CallToolResult:
+    """Remove multiple edges from the IR."""
+    edge_refs = arguments.get("edge_ids") or arguments.get("edges") or []
+
+    if not edge_refs:
+        return CallToolResult(
+            content=[TextContent(type="text", text="Error: edge_ids is required")],
+            isError=True,
+        )
+
+    try:
+        ir_data = load_ir()
+        resolved_edge_ids: list[str] = []
+        for edge_ref in edge_refs:
+            edge_id = resolve_edge_ref(ir_data, str(edge_ref))
+            if not edge_id:
+                return CallToolResult(
+                    content=[TextContent(type="text", text=f"Error: Edge {edge_ref} not found")],
+                    isError=True,
+                )
+            resolved_edge_ids.append(edge_id)
+
+        removed_aliases = [_format_edge_ref(ir_data, edge_id) for edge_id in resolved_edge_ids]
+        edge_id_set = set(resolved_edge_ids)
+        ir_data["edges"] = [e for e in ir_data["edges"] if e["id"] not in edge_id_set]
+
+        save_ir(ir_data)
+
+        result_message = f"Edges removed successfully!\nEdges: {removed_aliases}"
+        logger.info(result_message)
+
+        return CallToolResult(
+            content=[TextContent(type="text", text=result_message)],
+            isError=False,
+        )
+
+    except Exception as e:
+        logger.error("Error in remove_edges: %s", str(e))
         return CallToolResult(
             content=[TextContent(type="text", text=f"Error: {str(e)}")],
             isError=True,

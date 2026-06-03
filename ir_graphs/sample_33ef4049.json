@@ -1,0 +1,168 @@
+{
+  "nodes": [
+    {
+      "id": "31100a28-ab06-4c01-9cee-db3fdba2a25c",
+      "text": "Betelgeuse",
+      "x": 509.9505750407968,
+      "y": 362.08880825329936,
+      "width": 120.0,
+      "height": 46.0,
+      "frame_id": "B6SS5wyNyToY9ZMhyHBAF"
+    },
+    {
+      "id": "9fa1d46a-6ccc-475d-a051-8fe07dd4a556",
+      "text": "Bellatrix",
+      "x": 363.3965629501714,
+      "y": 214.20768231771717,
+      "width": 120.0,
+      "height": 46.0,
+      "frame_id": "B6SS5wyNyToY9ZMhyHBAF"
+    },
+    {
+      "id": "f5379445-9199-4a8f-b491-f2f778474ba1",
+      "text": "Meissa",
+      "x": 559.6673521881743,
+      "y": 168.0,
+      "width": 120.0,
+      "height": 46.0,
+      "frame_id": "B6SS5wyNyToY9ZMhyHBAF"
+    },
+    {
+      "id": "3c6c0850-6955-4a6e-88f5-26d3dd0e233c",
+      "text": "Alnitak",
+      "x": 397.6406715054312,
+      "y": 549.5565998327072,
+      "width": 120.0,
+      "height": 46.0,
+      "frame_id": "B6SS5wyNyToY9ZMhyHBAF"
+    },
+    {
+      "id": "7f9af9e0-1ebe-4cf2-b68e-d4e68736b4be",
+      "text": "Alnilam",
+      "x": 152.87586803566612,
+      "y": 445.6630327069052,
+      "width": 120.0,
+      "height": 46.0,
+      "frame_id": "B6SS5wyNyToY9ZMhyHBAF"
+    },
+    {
+      "id": "aaaec855-b8f3-44ad-86bb-b5c7b6fc8e45",
+      "text": "Mintaka",
+      "x": 148.0,
+      "y": 231.13428659708666,
+      "width": 120.0,
+      "height": 46.0,
+      "frame_id": "B6SS5wyNyToY9ZMhyHBAF"
+    },
+    {
+      "id": "7742a0a1-7977-455d-b97c-caea7f87ebf7",
+      "text": "Rigel",
+      "x": 328.97459456271827,
+      "y": 413.01186667204524,
+      "width": 120.0,
+      "height": 46.0,
+      "frame_id": "B6SS5wyNyToY9ZMhyHBAF"
+    },
+    {
+      "id": "64c77ec1-d72a-49a8-a288-b5b790264062",
+      "text": "Saiph",
+      "x": 253.4714018653341,
+      "y": 641.7013672811858,
+      "width": 120.0,
+      "height": 46.0,
+      "frame_id": "B6SS5wyNyToY9ZMhyHBAF"
+    }
+  ],
+  "edges": [
+    {
+      "id": "c9fb817b-2b0f-47aa-8a20-5a2d63e81017",
+      "from": "f5379445-9199-4a8f-b491-f2f778474ba1",
+      "to": "31100a28-ab06-4c01-9cee-db3fdba2a25c",
+      "frame_id": "B6SS5wyNyToY9ZMhyHBAF"
+    },
+    {
+      "id": "9903a3fa-b15f-4037-82be-cbfebff3b00b",
+      "from": "f5379445-9199-4a8f-b491-f2f778474ba1",
+      "to": "9fa1d46a-6ccc-475d-a051-8fe07dd4a556",
+      "frame_id": "B6SS5wyNyToY9ZMhyHBAF"
+    },
+    {
+      "id": "55d13f3b-f639-4acd-9fc2-3207be597bf1",
+      "from": "31100a28-ab06-4c01-9cee-db3fdba2a25c",
+      "to": "9fa1d46a-6ccc-475d-a051-8fe07dd4a556",
+      "frame_id": "B6SS5wyNyToY9ZMhyHBAF"
+    },
+    {
+      "id": "3b5cd6f5-9d1d-4496-ad9f-1bcdd77b0ee8",
+      "from": "31100a28-ab06-4c01-9cee-db3fdba2a25c",
+      "to": "3c6c0850-6955-4a6e-88f5-26d3dd0e233c",
+      "frame_id": "B6SS5wyNyToY9ZMhyHBAF"
+    },
+    {
+      "id": "e0bcaaad-f45a-45ee-a6a6-509d3f45b1de",
+      "from": "9fa1d46a-6ccc-475d-a051-8fe07dd4a556",
+      "to": "aaaec855-b8f3-44ad-86bb-b5c7b6fc8e45",
+      "frame_id": "B6SS5wyNyToY9ZMhyHBAF"
+    },
+    {
+      "id": "30bdbc99-20f9-4565-87da-41ba2d3a9ac0",
+      "from": "aaaec855-b8f3-44ad-86bb-b5c7b6fc8e45",
+      "to": "7f9af9e0-1ebe-4cf2-b68e-d4e68736b4be",
+      "frame_id": "B6SS5wyNyToY9ZMhyHBAF"
+    },
+    {
+      "id": "e685cbfe-5d1c-4307-ae23-c592f8248f45",
+      "from": "7f9af9e0-1ebe-4cf2-b68e-d4e68736b4be",
+      "to": "3c6c0850-6955-4a6e-88f5-26d3dd0e233c",
+      "frame_id": "B6SS5wyNyToY9ZMhyHBAF"
+    },
+    {
+      "id": "4debb02d-1062-41b7-8362-8e4ee62ef54b",
+      "from": "3c6c0850-6955-4a6e-88f5-26d3dd0e233c",
+      "to": "64c77ec1-d72a-49a8-a288-b5b790264062",
+      "frame_id": "B6SS5wyNyToY9ZMhyHBAF"
+    },
+    {
+      "id": "6caacaad-e489-47b5-adf6-f1a71b384825",
+      "from": "64c77ec1-d72a-49a8-a288-b5b790264062",
+      "to": "7742a0a1-7977-455d-b97c-caea7f87ebf7",
+      "frame_id": "B6SS5wyNyToY9ZMhyHBAF"
+    },
+    {
+      "id": "e7838553-937a-48e4-afe1-1c02807c2a21",
+      "from": "7742a0a1-7977-455d-b97c-caea7f87ebf7",
+      "to": "9fa1d46a-6ccc-475d-a051-8fe07dd4a556",
+      "frame_id": "B6SS5wyNyToY9ZMhyHBAF"
+    },
+    {
+      "id": "57e038c1-2818-4daf-86a4-2cb75dcf39bb",
+      "from": "7742a0a1-7977-455d-b97c-caea7f87ebf7",
+      "to": "31100a28-ab06-4c01-9cee-db3fdba2a25c",
+      "frame_id": "B6SS5wyNyToY9ZMhyHBAF"
+    }
+  ],
+  "frames": [
+    {
+      "id": "B6SS5wyNyToY9ZMhyHBAF",
+      "name": "orion",
+      "elements": [
+        "31100a28-ab06-4c01-9cee-db3fdba2a25c",
+        "9fa1d46a-6ccc-475d-a051-8fe07dd4a556",
+        "f5379445-9199-4a8f-b491-f2f778474ba1",
+        "3c6c0850-6955-4a6e-88f5-26d3dd0e233c",
+        "7f9af9e0-1ebe-4cf2-b68e-d4e68736b4be",
+        "aaaec855-b8f3-44ad-86bb-b5c7b6fc8e45",
+        "7742a0a1-7977-455d-b97c-caea7f87ebf7",
+        "64c77ec1-d72a-49a8-a288-b5b790264062"
+      ],
+      "x": 120.0,
+      "y": 120.0,
+      "width": 587.6673521881743,
+      "height": 591.7013672811858,
+      "layout": {
+        "type": "grid",
+        "columns": 3
+      }
+    }
+  ]
+}

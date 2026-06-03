@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import hashlib
 import random
 import time
 from pathlib import Path
@@ -23,23 +24,49 @@ def _base_dir() -> Path:
     return Path(__file__).parent.parent.parent
 
 
+def _current_config_path() -> Path:
+    return _base_dir() / "current.config"
+
+
+def _ir_graphs_dir() -> Path:
+    return _base_dir() / "ir_graphs"
+
+
 def load_current_config() -> dict[str, Any]:
-    config_file = _base_dir() / "current.config"
-    with open(config_file, "r", encoding="utf-8") as f:
+    with open(_current_config_path(), "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def _excalidraw_path_from_config(config: dict[str, Any]) -> Path | None:
+    excalidraw_path = config.get("excalidraw_path")
+    if excalidraw_path:
+        return Path(excalidraw_path).resolve()
+
+    # Backward compatibility with the old folder-based config.
+    board_dir_raw = config.get("path")
+    proj_name = config.get("proj_name")
+    if board_dir_raw and proj_name:
+        return (Path(board_dir_raw) / f"{proj_name}.excalidraw").resolve()
+
+    return None
+
+
+def _ir_filename_for(excalidraw_path: Path) -> str:
+    normalized = excalidraw_path.resolve().as_posix().lower()
+    short_hash = hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:8]
+    return f"{excalidraw_path.stem}_{short_hash}.json"
 
 
 def get_board_paths() -> tuple[Path, Path]:
     config = load_current_config()
-    board_dir_raw = config.get("path")
-    proj_name = config.get("proj_name")
+    excalidraw_path = _excalidraw_path_from_config(config)
 
-    if not board_dir_raw or not proj_name:
+    if not excalidraw_path:
         raise ValueError("No board path set in current.config. Call set_board first.")
 
-    board_dir = Path(board_dir_raw)
-    ir_path = board_dir / f"{proj_name}_drauvye_ir.json"
-    excalidraw_path = board_dir / f"{proj_name}.excalidraw"
+    ir_dir = _ir_graphs_dir()
+    ir_dir.mkdir(parents=True, exist_ok=True)
+    ir_path = ir_dir / _ir_filename_for(excalidraw_path)
     return ir_path, excalidraw_path
 
 
@@ -52,10 +79,123 @@ def load_ir() -> dict[str, Any]:
         return json.load(f)
 
 
+def _write_ir(ir_data: dict[str, Any]) -> Path:
+    ir_path, _ = get_board_paths()
+    ir_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = ir_path.with_name(f"{ir_path.name}.tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(ir_data, f, indent=2)
+    tmp_path.replace(ir_path)
+    return ir_path
+
+
 def _load_excalidraw_template() -> dict[str, Any]:
     template_path = _base_dir() / "templates" / "excalidraw_template.json"
     with open(template_path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def _load_excalidraw_file() -> dict[str, Any]:
+    _, excalidraw_path = get_board_paths()
+    if not excalidraw_path.exists():
+        raise FileNotFoundError(f"Excalidraw file not found: {excalidraw_path}")
+
+    with open(excalidraw_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _visible_elements(excalidraw_data: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        element
+        for element in excalidraw_data.get("elements", [])
+        if element.get("id") and not element.get("isDeleted", False)
+    ]
+
+
+def _text_from_element(element: dict[str, Any]) -> str:
+    return str(element.get("text") or element.get("originalText") or "")
+
+
+def _frame_from_element(element: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": element["id"],
+        "name": element.get("name") or "",
+        "elements": [],
+        "x": float(element.get("x", 0.0)),
+        "y": float(element.get("y", 0.0)),
+        "width": float(element.get("width", 0.0)),
+        "height": float(element.get("height", 0.0)),
+    }
+
+
+def _node_from_element(element: dict[str, Any]) -> dict[str, Any]:
+    node = {
+        "id": element["id"],
+        "text": _text_from_element(element),
+        "x": float(element.get("x", 0.0)),
+        "y": float(element.get("y", 0.0)),
+        "width": float(element.get("width", 0.0)),
+        "height": float(element.get("height", 0.0)),
+    }
+    if element.get("frameId"):
+        node["frame_id"] = element["frameId"]
+    return node
+
+
+def _edge_from_element(element: dict[str, Any], node_ids: set[str]) -> dict[str, Any] | None:
+    start_id = (element.get("startBinding") or {}).get("elementId")
+    end_id = (element.get("endBinding") or {}).get("elementId")
+    if start_id not in node_ids or end_id not in node_ids:
+        return None
+
+    edge = {
+        "id": element["id"],
+        "from": start_id,
+        "to": end_id,
+    }
+    if element.get("frameId"):
+        edge["frame_id"] = element["frameId"]
+    return edge
+
+
+def sync_ir_from_excalidraw() -> dict[str, Any]:
+    """
+    Pull supported user edits from the Excalidraw file into the IR.
+
+    The drawing is the editable surface for users, so MCP calls run this first
+    to see frames, text nodes, and bound arrows added or changed by hand.
+    """
+    excalidraw_data = _load_excalidraw_file()
+    elements = _visible_elements(excalidraw_data)
+
+    frames = [_frame_from_element(element) for element in elements if element.get("type") == "frame"]
+    frame_ids = {frame["id"] for frame in frames}
+    frames_by_id = {frame["id"]: frame for frame in frames}
+
+    nodes = [_node_from_element(element) for element in elements if element.get("type") == "text"]
+    node_ids = {node["id"] for node in nodes}
+
+    for node in nodes:
+        frame_id = node.get("frame_id")
+        if frame_id in frame_ids:
+            frames_by_id[frame_id]["elements"].append(node["id"])
+
+    edges = []
+    for element in elements:
+        if element.get("type") != "arrow":
+            continue
+        edge = _edge_from_element(element, node_ids)
+        if edge:
+            edges.append(edge)
+
+    ir_data = {
+        "nodes": nodes,
+        "edges": edges,
+        "frames": frames,
+    }
+    _write_ir(ir_data)
+    logger.info("IR synced from Excalidraw")
+    return ir_data
 
 
 def _index_token(index: int) -> str:
@@ -122,14 +262,59 @@ def _center_of(element: dict[str, Any]) -> tuple[float, float]:
     )
 
 
+def _box_bounds(element: dict[str, Any]) -> tuple[float, float, float, float]:
+    left = float(element.get("x", 0.0))
+    top = float(element.get("y", 0.0))
+    right = left + float(element.get("width", 0.0))
+    bottom = top + float(element.get("height", 0.0))
+    return left, top, right, bottom
+
+
+def _attachment_point_toward(element: dict[str, Any], target: tuple[float, float]) -> tuple[float, float]:
+    center_x, center_y = _center_of(element)
+    target_x, target_y = target
+    dx = target_x - center_x
+    dy = target_y - center_y
+    if dx == 0.0 and dy == 0.0:
+        return center_x, center_y
+
+    left, top, right, bottom = _box_bounds(element)
+    candidates: list[tuple[float, float, float]] = []
+
+    if dx != 0.0:
+        edge_x = right if dx > 0.0 else left
+        t = (edge_x - center_x) / dx
+        if t > 0.0:
+            y = center_y + dy * t
+            if top - 1e-6 <= y <= bottom + 1e-6:
+                candidates.append((t, edge_x, y))
+
+    if dy != 0.0:
+        edge_y = bottom if dy > 0.0 else top
+        t = (edge_y - center_y) / dy
+        if t > 0.0:
+            x = center_x + dx * t
+            if left - 1e-6 <= x <= right + 1e-6:
+                candidates.append((t, x, edge_y))
+
+    if not candidates:
+        return center_x, center_y
+
+    _, x, y = min(candidates, key=lambda item: item[0])
+    return x, y
+
+
 def _make_arrow_element(
     edge: dict[str, Any],
     start_element: dict[str, Any],
     end_element: dict[str, Any],
     index: int,
 ) -> dict[str, Any]:
-    start_x, start_y = _center_of(start_element)
-    end_x, end_y = _center_of(end_element)
+    start_center = _center_of(start_element)
+    end_center = _center_of(end_element)
+    midpoint = ((start_center[0] + end_center[0]) / 2.0, (start_center[1] + end_center[1]) / 2.0)
+    start_x, start_y = _attachment_point_toward(start_element, midpoint)
+    end_x, end_y = _attachment_point_toward(end_element, midpoint)
     origin_x = min(start_x, end_x)
     origin_y = min(start_y, end_y)
 
@@ -149,7 +334,7 @@ def _make_arrow_element(
         "roughness": 1,
         "opacity": 100,
         "groupIds": [],
-        "frameId": None,
+        "frameId": edge.get("frame_id"),
         "index": _index_token(index),
         "roundness": {"type": 2},
         "seed": _seed(),
@@ -296,7 +481,7 @@ def sync_excalidraw_from_ir(ir_data: dict[str, Any] | None = None) -> Path:
     for index, node in enumerate(nodes):
         position = positions.get(node["id"], (120.0, 120.0))
         element = _make_text_element(node, index, position)
-        element["frameId"] = node_to_frame_id.get(node["id"])
+        element["frameId"] = node_to_frame_id.get(node["id"]) or node.get("frame_id")
         node_elements.append(element)
         nodes_by_id[element["id"]] = element
 
@@ -349,4 +534,3 @@ def sync_excalidraw_from_ir(ir_data: dict[str, Any] | None = None) -> Path:
     tmp_path.replace(excalidraw_path)
     logger.info("Excalidraw synced: %s", excalidraw_path)
     return excalidraw_path
-

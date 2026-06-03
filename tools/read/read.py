@@ -7,32 +7,25 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 from typing import Any
 
 from mcp.types import TextContent, CallToolResult
 
 from graph.aliasing import build_alias_maps
+from sync.excalidraw_sync import get_board_paths, sync_ir_from_excalidraw
 
 logger = logging.getLogger(__name__)
 
 
 def get_ir_path():
-    """Get the IR file path from current.config"""
-    config_file = Path(__file__).parent.parent.parent / "current.config"
-
-    with open(config_file, "r", encoding="utf-8") as f:
-        config = json.load(f)
-
-    if not config.get("path"):
-        raise ValueError("No board path set in current.config. Call set_board first.")
-
-    ir_path = Path(config["path"]) / f"{config['proj_name']}_drauvye_ir.json"
+    """Get the repo-local IR file path for the active diagram."""
+    ir_path, _ = get_board_paths()
     return ir_path
 
 
 def load_ir():
     """Load the IR JSON file"""
+    sync_ir_from_excalidraw()
     ir_path = get_ir_path()
 
     if not ir_path.exists():
@@ -112,6 +105,7 @@ async def read_frame_get_all(arguments: dict[str, Any]) -> CallToolResult:
     try:
         ir_data = load_ir()
         frames = ir_data.get("frames", [])
+        _, _, frame_alias_by_id = build_alias_maps(ir_data)
 
         if not frames:
             result_message = "No frames found in the graph"
